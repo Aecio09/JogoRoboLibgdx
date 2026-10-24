@@ -8,6 +8,38 @@ This project was generated with a template including simple application launcher
 
 - `core`: Main module with the application logic shared by all platforms.
 - `lwjgl3`: Primary desktop platform using LWJGL3; was called 'desktop' in older docs.
+- `android`: Android platform, used to generate the APK.
+
+## Android (APK)
+
+Prerequisites:
+
+- JDK 17+ (the project builds with Java 21).
+- Android SDK with `platforms;android-36` and `build-tools;36.0.0`.
+  Point to it either with the `ANDROID_HOME` environment variable or with a
+  `local.properties` file in the project root containing `sdk.dir=/path/to/sdk`.
+
+Build the debug APK:
+
+```sh
+./gradlew :android:assembleDebug
+```
+
+The APK is written to `android/build/outputs/apk/debug/android-debug.apk`.
+Install it on a connected device or emulator with:
+
+```sh
+adb install -r android/build/outputs/apk/debug/android-debug.apk
+```
+
+Or do both in one step (installs and launches the game):
+
+```sh
+./gradlew :android:run
+```
+
+A release APK can be generated with `./gradlew :android:assembleRelease`; for
+publishing you still need to configure a signing key in `android/build.gradle`.
 
 ## Gradle
 
