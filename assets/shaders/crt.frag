@@ -10,34 +10,53 @@ uniform vec2 u_resolution;
 
 vec2 curve(vec2 uv) {
     uv = (uv - 0.5) * 2.0;
-    uv.x *= 1.0 + pow((abs(uv.y) / 7.0), 2.0); // De 5.0 para 7.0 (menos curva)
-    uv.y *= 1.0 + pow((abs(uv.x) / 6.0), 2.0); // De 4.0 para 6.0 (menos curva)
+    // Curvatura ajustada (+20% em relacao a versao anterior)
+    uv.x *= 1.0 + pow((abs(uv.y) / 6.0), 2.0);
+    uv.y *= 1.0 + pow((abs(uv.x) / 5.2), 2.0);
     uv = (uv / 2.0) + 0.5;
-    uv = uv * 0.98 + 0.01; // Ocupa mais espaço na tela
+    uv = uv * 0.98 + 0.01;
     return uv;
 }
 
 void main() {
-    vec2 uv = v_texCoords;
-    uv = curve(uv);
+    // Curvatura aumentada em 20% (fator de mistura ajustado para 0.78)
+    vec2 curved_uv = curve(v_texCoords);
+    vec2 uv = mix(v_texCoords, curved_uv, 0.78);
     
-    vec3 col;
-    float r = texture2D(u_texture, vec2(uv.x + 0.003, uv.y)).r;
-    float g = texture2D(u_texture, vec2(uv.x + 0.000, uv.y)).g;
-    float b = texture2D(u_texture, vec2(uv.x - 0.003, uv.y)).b;
+    // Aberracao cromatica radial e natural (zero no centro da tela, evitando efeito de oculos 3D)
+    vec2 delta = uv - 0.5;
+    float distSq = dot(delta, delta);
+    float r = texture2D(u_texture, uv + delta * (distSq * 0.003)).r;
+    float g = texture2D(u_texture, uv).g;
+    float b = texture2D(u_texture, uv - delta * (distSq * 0.003)).b;
     
-    col = vec3(r, g, b);
+    vec3 col = vec3(r, g, b);
     
-    float scanline = sin(uv.y * 800.0) * 0.04;
+    // Mascara de fosforo CRT sutil (subpixels RGB sem borrar ou criar fantasmas vermelhos/azuis)
+    vec3 mask = vec3(1.0);
+    float subpixel = mod(gl_FragCoord.x, 3.0);
+    if (subpixel < 1.0) {
+        mask = vec3(1.04, 0.96, 0.96);
+    } else if (subpixel < 2.0) {
+        mask = vec3(0.96, 1.04, 0.96);
+    } else {
+        mask = vec3(0.96, 0.96, 1.04);
+    }
+    col *= mask;
+    
+    // Scanlines horizontais suaves
+    float scanline = sin(uv.y * 720.0 * 3.14159) * 0.03;
     col -= scanline;
     
+    // Vinheta e escurecimento natural de borda do tubo catodico
     float vignette = uv.x * uv.y * (1.0 - uv.x) * (1.0 - uv.y);
-    vignette = clamp(pow(16.0 * vignette, 0.3), 0.0, 1.0);
-    col *= vignette;
+    vignette = clamp(pow(16.0 * vignette, 0.25), 0.0, 1.0);
+    col *= mix(1.0, vignette, 0.65);
     
-    // Scanline effect 2
-    col *= 1.0 + 0.01 * sin(110.0 * u_time);
+    // Oscilacao sutil de brilho do tubo (flicker)
+    col *= 1.0 + 0.006 * sin(110.0 * u_time);
     
+    // Corte nas bordas curvas
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
         col = vec3(0.0);
     }

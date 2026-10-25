@@ -15,15 +15,21 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.graphics.glutils.FrameBuffer;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.Matrix4;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.ScreenUtils;
+import com.badlogic.gdx.utils.viewport.FitViewport;
 import io.github.projetoalgoritmos.controller.GameController;
 import io.github.projetoalgoritmos.datastructures.CustomLinkedList;
 import io.github.projetoalgoritmos.model.*;
 import io.github.projetoalgoritmos.utils.GifDecoder;
+import io.github.projetoalgoritmos.minigames.VirusMinigame;
 
 public class Main extends ApplicationAdapter {
-    private enum GameState { LOGIN, PLAYING, GAMEOVER, RANKING }
+    private enum GameState { LOGIN, PLAYING, GAMEOVER, RANKING, MINIGAME_TEST }
     private GameState currentState = GameState.LOGIN;
+    private GameState previousState = GameState.PLAYING;
+    private VirusMinigame virusMinigame;
     private String playerName = "";
 
     private SpriteBatch batch;
@@ -49,6 +55,11 @@ public class Main extends ApplicationAdapter {
     private FrameBuffer fbo;
     private ShaderProgram crtShader;
     private TextureRegion fboRegion;
+
+    // desenha o jogo sempre em 1280x720, ajustando ao tamanho real da tela
+    private final FitViewport viewport = new FitViewport(1280, 720);
+    private final Matrix4 fboProjection = new Matrix4().setToOrtho2D(0, 0, 1280, 720);
+    private final Vector2 touchPoint = new Vector2();
 
     private final Color COLOR_BG = new Color(0.047f, 0.055f, 0.067f, 1f);
     private final Color COLOR_SURFACE = new Color(0.067f, 0.075f, 0.086f, 1f);
@@ -86,10 +97,12 @@ public class Main extends ApplicationAdapter {
         
         loadRanking();
         initNewSession();
+        virusMinigame = new VirusMinigame();
 
         Gdx.input.setInputProcessor(new InputAdapter() {
             @Override
             public boolean keyTyped(char character) {
+                if (currentState == GameState.MINIGAME_TEST) return false;
                 if (character >= 32 && character <= 126) {
                     inputBuffer += character;
                     return true;
@@ -99,6 +112,23 @@ public class Main extends ApplicationAdapter {
 
             @Override
             public boolean keyDown(int keycode) {
+                if (keycode == Input.Keys.F1) {
+                    if (currentState == GameState.MINIGAME_TEST) {
+                        currentState = previousState;
+                    } else {
+                        previousState = currentState;
+                        currentState = GameState.MINIGAME_TEST;
+                        virusMinigame.reiniciar();
+                    }
+                    return true;
+                }
+                if (currentState == GameState.MINIGAME_TEST) {
+                    if (keycode == Input.Keys.ESCAPE) {
+                        currentState = previousState;
+                        return true;
+                    }
+                    return false;
+                }
                 if (keycode == Input.Keys.BACKSPACE && inputBuffer.length() > 0) {
                     inputBuffer = inputBuffer.substring(0, inputBuffer.length() - 1);
                     return true;
@@ -242,9 +272,16 @@ public class Main extends ApplicationAdapter {
     }
 
     @Override
+    public void resize(int width, int height) {
+        viewport.update(width, height, true);
+    }
+
+    @Override
     public void render() {
         fbo.begin();
         ScreenUtils.clear(COLOR_BG);
+        batch.setProjectionMatrix(fboProjection);
+        shapeRenderer.setProjectionMatrix(fboProjection);
         float dt = Gdx.graphics.getDeltaTime();
         stateTime += dt;
 
@@ -257,8 +294,10 @@ public class Main extends ApplicationAdapter {
             }
             
             if (Gdx.input.justTouched()) {
-                float mx = Gdx.input.getX();
-                float my = Gdx.graphics.getHeight() - Gdx.input.getY();
+                touchPoint.set(Gdx.input.getX(), Gdx.input.getY());
+                viewport.unproject(touchPoint);
+                float mx = touchPoint.x;
+                float my = touchPoint.y;
                 if (mx >= 80 && mx <= 360) {
                     for (int i = 0; i < gameController.getOficina().size(); i++) {
                         float ry = 600 - (i * 75);
@@ -287,11 +326,16 @@ public class Main extends ApplicationAdapter {
             drawGameOverScreen();
         } else if (currentState == GameState.RANKING) {
             drawRankingMenu();
+        } else if (currentState == GameState.MINIGAME_TEST) {
+            virusMinigame.update(dt);
+            virusMinigame.render(batch, font);
         }
         
         fbo.end();
 
         ScreenUtils.clear(0, 0, 0, 1);
+        viewport.apply();
+        batch.setProjectionMatrix(viewport.getCamera().combined);
         batch.setShader(crtShader);
         batch.begin();
         crtShader.setUniformf("u_time", stateTime);
@@ -318,6 +362,8 @@ public class Main extends ApplicationAdapter {
         font.draw(batch, "> " + inputBuffer + "_", 460, 380);
         font.getData().setScale(0.7f);
         font.draw(batch, "PRESS ENTER TO AUTHORIZE", 540, 320);
+        font.setColor(COLOR_HAZARD);
+        font.draw(batch, "PRESSIONE [F1] PARA TESTAR O MINIGAME DO VIRUS", 460, 260);
         batch.end();
     }
 
@@ -411,6 +457,9 @@ public class Main extends ApplicationAdapter {
         font.getData().setScale(1.0f);
         font.setColor(COLOR_CYAN);
         font.draw(batch, "TERMINAL_OS_v4.2  |  OPERATOR: " + playerName.toUpperCase(), 100, 700);
+        font.setColor(COLOR_HAZARD);
+        font.draw(batch, "[F1] TESTAR MINIGAME", 650, 700);
+        font.setColor(COLOR_CYAN);
         font.draw(batch, "UPTIME: " + (int)sessionTimer + "s", 1050, 700);
         font.draw(batch, "[ REPAIR_QUEUE ]", 100, 640);
         
@@ -487,6 +536,9 @@ public class Main extends ApplicationAdapter {
         crtShader.dispose();
         for (TextureRegion frame : backgroundAnimation.getKeyFrames()) {
             frame.getTexture().dispose();
+        }
+        if (virusMinigame != null) {
+            virusMinigame.dispose();
         }
     }
 }
