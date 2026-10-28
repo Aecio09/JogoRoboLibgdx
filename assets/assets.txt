@@ -23,6 +23,7 @@ components/gpu.png
 components/ram.png
 components/sensor.png
 computador-virus-arena-background.png
+computador-virus-connection-background.png
 death.png
 gunbot1/botred1.png
 gunbot1/botred2.png
@@ -32,6 +33,7 @@ gunbot2/botorange1.png
 gunbot2/botorange2.png
 gunbot2/botorange3.png
 gunbot2/botorange4.png
+guns.zip
 heart-Full.png
 heart-empty.png
 hs_err_pid4155.log

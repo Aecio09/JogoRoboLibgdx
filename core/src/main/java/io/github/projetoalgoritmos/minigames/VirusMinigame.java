@@ -98,6 +98,7 @@ public class VirusMinigame {
     private float stateTime = 0f;
     private boolean isFinished = false;
     private boolean isVictory = false;
+    private int dificuldade = 1;
 
     public VirusMinigame() {
         carregarRecursos();
@@ -187,6 +188,13 @@ public class VirusMinigame {
         screenBounds = new Rectangle(screenX, screenY, screenWidth, screenHeight);
     }
 
+    public void configurarDificuldade(int nivel) {
+        this.dificuldade = Math.max(1, nivel);
+    }
+
+    public boolean isFinished() { return isFinished; }
+    public boolean isVictory() { return isVictory; }
+
     public void reiniciar() {
         // Posiciona o player na base da telinha do monitor
         playerX = screenBounds.x + (screenBounds.width - playerWidth) / 2f;
@@ -200,17 +208,17 @@ public class VirusMinigame {
         bullets = new CustomLinkedList<>();
         viruses = new CustomLinkedList<>();
 
-        // Spawna 5 vírus em posições e velocidades variadas
-        float[][] pos = {
-            {screenBounds.x + 40, screenBounds.y + screenBounds.height - 70, 130, -70},
-            {screenBounds.x + 140, screenBounds.y + screenBounds.height - 110, -110, 80},
-            {screenBounds.x + 250, screenBounds.y + screenBounds.height - 65, 140, -90},
-            {screenBounds.x + 360, screenBounds.y + screenBounds.height - 105, -120, -75},
-            {screenBounds.x + 460, screenBounds.y + screenBounds.height - 75, 135, 85}
-        };
+        // A dificuldade aumenta a quantidade e a velocidade dos vírus.
+        int quantidade = Math.min(2 + dificuldade, 8);
+        float multiplicador = 1f + (dificuldade - 1) * 0.10f;
 
-        for (int i = 0; i < pos.length; i++) {
-            viruses.add(new Virus(pos[i][0], pos[i][1], pos[i][2], pos[i][3]));
+        for (int i = 0; i < quantidade; i++) {
+            float x = screenBounds.x + 30 + MathUtils.random(screenBounds.width - 100);
+            float y = screenBounds.y + screenBounds.height * 0.55f
+                + MathUtils.random(screenBounds.height * 0.35f);
+            float vx = MathUtils.random(70f, 130f) * (MathUtils.randomBoolean() ? 1 : -1) * multiplicador;
+            float vy = MathUtils.random(50f, 100f) * (MathUtils.randomBoolean() ? 1 : -1) * multiplicador;
+            viruses.add(new Virus(x, y, vx, vy));
         }
     }
 
@@ -408,7 +416,8 @@ public class VirusMinigame {
 
         // 6. Contador de Vírus com a fonte BoldPixels.ttf
         customFont.setColor(Color.WHITE);
-        customFont.draw(batch, "VIRUS: " + viruses.size(), screenBounds.x + screenBounds.width - 120, screenBounds.y + screenBounds.height - 18);
+        customFont.draw(batch, "NIVEL " + dificuldade + "  VIRUS: " + viruses.size(),
+            screenBounds.x + screenBounds.width - 160, screenBounds.y + screenBounds.height - 18);
 
         // 7. Mensagens de Vitória / Derrota perfeitamente centralizadas na tela do computador
         if (isFinished) {

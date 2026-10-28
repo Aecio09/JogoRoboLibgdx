@@ -49,6 +49,11 @@ public class CustomLinkedList<T> {
         return current.data;
     }
 
+    public void clear() {
+        head = null;
+        size = 0;
+    }
+
     public int size() {
         return size;
     }
