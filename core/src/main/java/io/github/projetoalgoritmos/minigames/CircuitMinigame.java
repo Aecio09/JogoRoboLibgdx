@@ -15,6 +15,7 @@ import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Rectangle;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.utils.viewport.Viewport;
+import io.github.projetoalgoritmos.model.Powerup;
 
 /**
  * Minigame de labirinto de circuitos (Pipe Puzzle).
@@ -44,12 +45,14 @@ public class CircuitMinigame {
     public static class Celula {
         public TipoPeca tipo;
         public int rotacao;       // 0, 1, 2, 3 (em sentidos de 90°)
+        public int rotacaoSolucao; // rotação correta antes do embaralhamento
         public boolean fixa;      // Se não pode ser rotacionada
         public boolean energizada; // Se a energia está fluindo por aqui
 
         public Celula(TipoPeca tipo, int rotacao, boolean fixa) {
             this.tipo = tipo;
             this.rotacao = rotacao;
+            this.rotacaoSolucao = rotacao;
             this.fixa = fixa;
             this.energizada = false;
         }
@@ -138,8 +141,17 @@ public class CircuitMinigame {
 
     // Estado
     private float stateTime = 0f;
-    private boolean isFinished = false;
+    private boolean resultReady = false;
     private boolean isVictory = false;
+    private final MinigameAnimation animation = new MinigameAnimation();
+
+    // Power-up ativo neste reparo
+    private Powerup powerupAtivo;
+    private float diagnosticoTimer = 0f;
+    private float multimetroTimer = 0f;
+    private int precisaoClicks = 0;
+    private int curingaCargas = 0;
+    private boolean curingaArmado = false;
 
     public CircuitMinigame() {
         carregarRecursos();
@@ -221,18 +233,36 @@ public class CircuitMinigame {
         configurarDimensoes();
     }
 
-    public boolean isFinished() { return isFinished; }
+    public void aplicarPowerup(Powerup powerup) {
+        this.powerupAtivo = (powerup != null && powerup.getTipo() == Powerup.Tipo.CIRCUITO)
+            ? powerup : null;
+    }
+
+    private boolean temEfeito(Powerup.Efeito efeito) {
+        return powerupAtivo != null && powerupAtivo.getEfeito() == efeito;
+    }
+
+    public boolean isFinished() {
+        return resultReady && animation.isOutroFinished();
+    }
+
     public boolean isVictory() { return isVictory; }
+    public boolean isResultReady() { return resultReady; }
+    public boolean isIntroActive() { return animation.isIntroActive(); }
+    public boolean isAnimating() { return animation.isAnimating(); }
 
     public void reiniciar() {
+        resultReady = false;
+        isVictory = false;
+
         int tentativas = 0;
         do {
             gerarPuzzle();
             propagarEnergia();
-        } while (isFinished && ++tentativas < 10);
+        } while (isVictory && ++tentativas < 10);
 
         // Caso raríssimo: o tabuleiro já nasceu resolvido. Desalinha uma peça.
-        for (int i = 0; i < 20 && isFinished; i++) {
+        for (int i = 0; i < 20 && isVictory; i++) {
             int r = MathUtils.random(rows - 1);
             int c = MathUtils.random(cols - 1);
             if (!tabuleiro[r][c].fixa) {
@@ -242,6 +272,14 @@ public class CircuitMinigame {
         }
 
         stateTime = 0f;
+        resultReady = false;
+        isVictory = false;
+        diagnosticoTimer = temEfeito(Powerup.Efeito.DIAGNOSTICO) ? 8f : 0f;
+        multimetroTimer = temEfeito(Powerup.Efeito.MULTIMETRO) ? 8f : 0f;
+        precisaoClicks = temEfeito(Powerup.Efeito.PRECISAO) ? 3 : 0;
+        curingaCargas = temEfeito(Powerup.Efeito.CURINGA) ? 1 : 0;
+        curingaArmado = false;
+        animation.reiniciar();
     }
 
     /**
@@ -306,6 +344,13 @@ public class CircuitMinigame {
                 if (!noCaminho[r][c]) {
                     tabuleiro[r][c] = criarPecaAleatoria();
                 }
+            }
+        }
+
+        // Guarda a rotação correta (antes de embaralhar) para a Chave de Precisão.
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                tabuleiro[r][c].rotacaoSolucao = tabuleiro[r][c].rotacao;
             }
         }
 
@@ -444,7 +489,6 @@ public class CircuitMinigame {
 
         // Verifica vitória
         isVictory = tabuleiro[destinoRow][destinoCol].energizada;
-        isFinished = isVictory;
     }
 
     private final Vector2 tempTouch = new Vector2();
@@ -455,13 +499,26 @@ public class CircuitMinigame {
 
     public void update(float delta, Viewport viewport) {
         stateTime += delta;
+        animation.update(delta);
 
-        if (Gdx.input.isKeyJustPressed(Input.Keys.R)) {
+        if (diagnosticoTimer > 0f) {
+            diagnosticoTimer = Math.max(0f, diagnosticoTimer - delta);
+        }
+        if (multimetroTimer > 0f) {
+            multimetroTimer = Math.max(0f, multimetroTimer - delta);
+        }
+
+        if (!resultReady && Gdx.input.isKeyJustPressed(Input.Keys.R)) {
             reiniciar();
             return;
         }
 
-        if (isFinished) return;
+        if (resultReady) return;
+        if (animation.isIntroActive()) return;
+
+        if (curingaCargas > 0 && Gdx.input.isKeyJustPressed(Input.Keys.C)) {
+            curingaArmado = !curingaArmado;
+        }
 
         // Clique do mouse para rotacionar peças
         if (Gdx.input.justTouched()) {
@@ -486,15 +543,60 @@ public class CircuitMinigame {
                 if (col >= 0 && col < cols && row >= 0 && row < rows) {
                     Celula cel = tabuleiro[row][col];
                     if (!cel.fixa) {
-                        cel.rotacionar();
+                        if (curingaArmado && curingaCargas > 0) {
+                            cel.tipo = TipoPeca.CRUZ;
+                            cel.rotacao = 0;
+                            curingaCargas--;
+                            curingaArmado = false;
+                            animation.shake(0.20f, 6f);
+                        } else if (precisaoClicks > 0 && noCaminho[row][col]) {
+                            if (cel.rotacao != cel.rotacaoSolucao) {
+                                cel.rotacao = cel.rotacaoSolucao;
+                                precisaoClicks--;
+                            }
+                            animation.shake(0.16f, 4f);
+                        } else {
+                            cel.rotacionar();
+                            animation.shake(0.16f, 4f);
+                        }
+
                         propagarEnergia();
+                        if (isVictory) {
+                            resultReady = true;
+                            animation.startOutro();
+                        }
                     }
                 }
             }
         }
     }
 
+    private int[] encontrarFalha() {
+        int[] fallback = null;
+
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (!noCaminho[r][c] || tabuleiro[r][c].energizada) continue;
+                if (fallback == null) {
+                    fallback = new int[]{r, c};
+                }
+
+                for (int d = 0; d < 4; d++) {
+                    int nr = r + DIRS[d][0];
+                    int nc = c + DIRS[d][1];
+                    if (nr >= 0 && nr < rows && nc >= 0 && nc < cols
+                        && tabuleiro[nr][nc].energizada) {
+                        return new int[]{r, c};
+                    }
+                }
+            }
+        }
+
+        return fallback;
+    }
+
     public void render(SpriteBatch batch, BitmapFont defaultFont) {
+        animation.apply(batch);
         batch.begin();
 
         // 1. Desenha o monitor
@@ -591,8 +693,62 @@ public class CircuitMinigame {
         }
         batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
 
+        // 5.1 Efeitos dos power-ups de informação
+        if (diagnosticoTimer > 0f) {
+            float alpha = 0.45f + 0.25f * MathUtils.sin(stateTime * 6f);
+            batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE);
+            batch.setColor(0.10f, 0.90f, 1f, alpha);
+            for (int r = 0; r < rows; r++) {
+                for (int c = 0; c < cols; c++) {
+                    if (!noCaminho[r][c]) continue;
+                    float cx = gridX + c * cellSize;
+                    float cy = gridY + r * cellSize;
+                    float borda = 2f;
+                    batch.draw(pixelTexture, cx, cy, cellSize, borda);
+                    batch.draw(pixelTexture, cx, cy + cellSize - borda, cellSize, borda);
+                    batch.draw(pixelTexture, cx, cy, borda, cellSize);
+                    batch.draw(pixelTexture, cx + cellSize - borda, cy, borda, cellSize);
+                }
+            }
+            batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        }
+
+        if (multimetroTimer > 0f) {
+            int[] falha = encontrarFalha();
+            if (falha != null) {
+                float cx = gridX + falha[1] * cellSize;
+                float cy = gridY + falha[0] * cellSize;
+                float pulso = 0.55f + 0.45f * MathUtils.sin(stateTime * 9f);
+                float borda = 3f;
+                float meio = cellSize / 2f;
+
+                batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE);
+                batch.setColor(1f, 0.30f, 0.20f, pulso);
+                batch.draw(pixelTexture, cx, cy, cellSize, borda);
+                batch.draw(pixelTexture, cx, cy + cellSize - borda, cellSize, borda);
+                batch.draw(pixelTexture, cx, cy, borda, cellSize);
+                batch.draw(pixelTexture, cx + cellSize - borda, cy, borda, cellSize);
+                batch.draw(pixelTexture, cx + meio - 1.5f, cy + 6, 3, cellSize - 12);
+                batch.draw(pixelTexture, cx + 6, cy + meio - 1.5f, cellSize - 12, 3);
+                batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+            }
+        }
+
+        if (curingaArmado) {
+            float pulso = 0.45f + 0.35f * MathUtils.sin(stateTime * 8f);
+            float borda = 3f;
+            batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE);
+            batch.setColor(1f, 0.45f, 0.95f, pulso);
+            batch.draw(pixelTexture, gridX, gridY, cellSize * cols, borda);
+            batch.draw(pixelTexture, gridX, gridY + cellSize * rows - borda, cellSize * cols, borda);
+            batch.draw(pixelTexture, gridX, gridY, borda, cellSize * rows);
+            batch.draw(pixelTexture, gridX + cellSize * cols - borda, gridY, borda, cellSize * rows);
+            batch.setBlendFunction(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        }
+        batch.setColor(Color.WHITE);
+
         // 6. Labels FONTE e CHIP
-        customFont.setColor(COR_FONTE);
+        customFont.setColor(Color.WHITE);
         glyphLayout.setText(customFont, "FONTE");
         customFont.draw(batch, "FONTE", gridX - glyphLayout.width - 12, gridY + fonteRow * cellSize + cellSize / 2f + 5);
 
@@ -600,10 +756,10 @@ public class CircuitMinigame {
         glyphLayout.setText(customFont, "CHIP");
         customFont.draw(batch, "CHIP", gridX + cols * cellSize + 12, gridY + destinoRow * cellSize + cellSize / 2f + 5);
 
-        // 7. Mensagem de vitória
-        if (isFinished && isVictory) {
+        // 7. Mensagem de vitória durante a saída do computador
+        if (resultReady && isVictory) {
             String title = "CIRCUITO CONECTADO!";
-            String subtitle = "Pressione [R] para reiniciar ou [ESC] para sair";
+            String subtitle = "RETORNANDO AO TERMINAL...";
 
             glyphLayout.setText(customFontTitle, title);
             float titleX = screenBounds.x + (screenBounds.width - glyphLayout.width) / 2f;
@@ -623,8 +779,24 @@ public class CircuitMinigame {
         controlsFont.setColor(COLOR_CONTROLS);
         controlsFont.draw(batch, controlsText, controlsX, screenBounds.y - 12);
 
+        String powerupText = "";
+        if (curingaCargas > 0) {
+            powerupText = curingaArmado
+                ? "CURINGA ARMADO: CLIQUE UMA PECA"
+                : "CHIP CURINGA: [C] PARA ARMAR";
+        } else if (precisaoClicks > 0) {
+            powerupText = "CHAVE DE PRECISAO: " + precisaoClicks + " CLIQUES RESTANTES";
+        }
+        if (!powerupText.isEmpty()) {
+            glyphLayout.setText(customFont, powerupText);
+            float powerupX = compX + (compWidth - glyphLayout.width) / 2f;
+            customFont.setColor(COR_TRILHA_ENER);
+            customFont.draw(batch, powerupText, powerupX, screenBounds.y - 34);
+        }
+
         batch.setColor(Color.WHITE);
         batch.end();
+        animation.reset(batch);
     }
 
     public void dispose() {

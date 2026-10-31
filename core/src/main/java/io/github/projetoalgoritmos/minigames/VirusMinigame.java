@@ -16,6 +16,7 @@ import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator.FreeTypeFont
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Rectangle;
 import io.github.projetoalgoritmos.datastructures.CustomLinkedList;
+import io.github.projetoalgoritmos.model.Powerup;
 import io.github.projetoalgoritmos.utils.GifDecoder;
 
 /**
@@ -26,12 +27,19 @@ public class VirusMinigame {
     // Representa um projétil disparado pelo jogador
     public static class Bullet {
         public float x, y;
+        public float vx, vy;
         public float width = 6;
         public float height = 14;
 
         public Bullet(float x, float y) {
+            this(x, y, 0f, 460f);
+        }
+
+        public Bullet(float x, float y, float vx, float vy) {
             this.x = x;
             this.y = y;
+            this.vx = vx;
+            this.vy = vy;
         }
 
         public Rectangle getBounds() {
@@ -89,6 +97,12 @@ public class VirusMinigame {
     private final int MAX_LIVES = 3;
     private float invulnerabilityTimer = 0f;
     private float shootCooldown = 0f;
+    private Powerup powerupAtivo;
+    private boolean escudoAtivo = false;
+    private float droneTempoRestante = 0f;
+    private float droneTiroCooldown = 0f;
+    private float droneAngulo = 0f;
+    private float droneX, droneY;
 
     // Listas encadeadas customizadas acadêmicas (sem java.util)
     private CustomLinkedList<Bullet> bullets;
@@ -96,9 +110,10 @@ public class VirusMinigame {
 
     // Controle de estado
     private float stateTime = 0f;
-    private boolean isFinished = false;
+    private boolean resultReady = false;
     private boolean isVictory = false;
     private int dificuldade = 1;
+    private final MinigameAnimation animation = new MinigameAnimation();
 
     public VirusMinigame() {
         carregarRecursos();
@@ -192,8 +207,23 @@ public class VirusMinigame {
         this.dificuldade = Math.max(1, nivel);
     }
 
-    public boolean isFinished() { return isFinished; }
+    public void aplicarPowerup(Powerup powerup) {
+        this.powerupAtivo = (powerup != null && powerup.getTipo() == Powerup.Tipo.VIRUS)
+            ? powerup : null;
+    }
+
+    private boolean temEfeito(Powerup.Efeito efeito) {
+        return powerupAtivo != null && powerupAtivo.getEfeito() == efeito;
+    }
+
+    public boolean isFinished() {
+        return resultReady && animation.isOutroFinished();
+    }
+
     public boolean isVictory() { return isVictory; }
+    public boolean isResultReady() { return resultReady; }
+    public boolean isIntroActive() { return animation.isIntroActive(); }
+    public boolean isAnimating() { return animation.isAnimating(); }
 
     public void reiniciar() {
         // Posiciona o player na base da telinha do monitor
@@ -202,8 +232,16 @@ public class VirusMinigame {
         playerLives = MAX_LIVES;
         invulnerabilityTimer = 0f;
         shootCooldown = 0f;
-        isFinished = false;
+        escudoAtivo = temEfeito(Powerup.Efeito.FIREWALL);
+        droneTempoRestante = temEfeito(Powerup.Efeito.DRONE) ? 8f : 0f;
+        droneTiroCooldown = 0f;
+        droneAngulo = 0f;
+        droneX = playerX + playerWidth / 2f;
+        droneY = playerY + playerHeight / 2f;
+        stateTime = 0f;
+        resultReady = false;
         isVictory = false;
+        animation.reiniciar();
 
         bullets = new CustomLinkedList<>();
         viruses = new CustomLinkedList<>();
@@ -220,18 +258,28 @@ public class VirusMinigame {
             float vy = MathUtils.random(50f, 100f) * (MathUtils.randomBoolean() ? 1 : -1) * multiplicador;
             viruses.add(new Virus(x, y, vx, vy));
         }
+
+        if (temEfeito(Powerup.Efeito.CRIOGENIA)) {
+            for (int i = 0; i < viruses.size(); i++) {
+                Virus v = viruses.get(i);
+                v.vx *= 0.55f;
+                v.vy *= 0.55f;
+            }
+        }
     }
 
     public void update(float delta) {
         stateTime += delta;
+        animation.update(delta);
 
-        // Tecla R reinicia a qualquer momento
-        if (Gdx.input.isKeyJustPressed(Input.Keys.R)) {
+        // Tecla R reinicia enquanto o resultado ainda não foi definido
+        if (!resultReady && Gdx.input.isKeyJustPressed(Input.Keys.R)) {
             reiniciar();
             return;
         }
 
-        if (isFinished) return;
+        if (resultReady) return;
+        if (animation.isIntroActive()) return;
 
         if (invulnerabilityTimer > 0) {
             invulnerabilityTimer -= delta;
@@ -259,21 +307,65 @@ public class VirusMinigame {
         playerX = MathUtils.clamp(playerX, screenBounds.x, screenBounds.x + screenBounds.width - playerWidth);
         playerY = MathUtils.clamp(playerY, screenBounds.y, screenBounds.y + screenBounds.height - playerHeight);
 
+        // 2.1 Drone de backup: orbita o jogador e atira no vírus mais próximo
+        if (droneTempoRestante > 0f) {
+            droneTempoRestante -= delta;
+            droneAngulo += delta * 2.2f;
+            droneX = playerX + playerWidth / 2f + MathUtils.cos(droneAngulo) * 36f;
+            droneY = playerY + playerHeight / 2f + MathUtils.sin(droneAngulo) * 22f;
+            droneTiroCooldown -= delta;
+
+            if (droneTiroCooldown <= 0f) {
+                Virus alvo = encontrarVirusMaisProximo(droneX, droneY);
+                if (alvo != null) {
+                    float alvoX = alvo.x + alvo.width / 2f;
+                    float alvoY = alvo.y + alvo.height / 2f;
+                    float dx = alvoX - droneX;
+                    float dy = alvoY - droneY;
+                    float distancia = (float) Math.sqrt(dx * dx + dy * dy);
+
+                    if (distancia > 0.01f) {
+                        float velocidade = 380f;
+                        bullets.add(new Bullet(
+                            droneX, droneY,
+                            dx / distancia * velocidade,
+                            dy / distancia * velocidade
+                        ));
+                    }
+                    droneTiroCooldown = 0.9f;
+                } else {
+                    droneTiroCooldown = 0.25f;
+                }
+            }
+        }
+
         // 3. Disparo do jogador (Espaço)
         if (Gdx.input.isKeyPressed(Input.Keys.SPACE) && shootCooldown <= 0) {
             float bulletX = playerX + (playerWidth / 2f) - 3;
             float bulletY = playerY + playerHeight - 6;
-            bullets.add(new Bullet(bulletX, bulletY));
-            shootCooldown = 0.22f;
+            float bulletSpeed = temEfeito(Powerup.Efeito.OVERCLOCK) ? 575f : 460f;
+
+            if (temEfeito(Powerup.Efeito.LEQUE)) {
+                bullets.add(new Bullet(bulletX, bulletY, -110f, bulletSpeed));
+                bullets.add(new Bullet(bulletX, bulletY, 0f, bulletSpeed));
+                bullets.add(new Bullet(bulletX, bulletY, 110f, bulletSpeed));
+            } else {
+                bullets.add(new Bullet(bulletX, bulletY, 0f, bulletSpeed));
+            }
+
+            shootCooldown = temEfeito(Powerup.Efeito.OVERCLOCK) ? 0.10f : 0.22f;
         }
 
-        // 4. Atualizar Tiros e colisão com topo
-        float bulletSpeed = 460f;
+        // 4. Atualizar Tiros e remover os que saíram da tela
         for (int i = 0; i < bullets.size(); i++) {
             Bullet b = bullets.get(i);
-            b.y += bulletSpeed * delta;
+            b.x += b.vx * delta;
+            b.y += b.vy * delta;
 
-            if (b.y > screenBounds.y + screenBounds.height) {
+            if (b.y > screenBounds.y + screenBounds.height
+                || b.y + b.height < screenBounds.y
+                || b.x + b.width < screenBounds.x
+                || b.x > screenBounds.x + screenBounds.width) {
                 bullets.remove(b);
                 i--;
             }
@@ -330,11 +422,19 @@ public class VirusMinigame {
             for (int i = 0; i < viruses.size(); i++) {
                 Virus v = viruses.get(i);
                 if (playerHitbox.overlaps(v.getBounds())) {
-                    playerLives--;
                     invulnerabilityTimer = 1.3f;
-                    if (playerLives <= 0) {
-                        isFinished = true;
-                        isVictory = false;
+                    if (escudoAtivo) {
+                        escudoAtivo = false;
+                        animation.shake(0.36f, 13f);
+                    } else {
+                        playerLives--;
+                        animation.shake(playerLives <= 0 ? 0.65f : 0.36f,
+                            playerLives <= 0 ? 22f : 13f);
+                        if (playerLives <= 0) {
+                            resultReady = true;
+                            isVictory = false;
+                            animation.startOutro();
+                        }
                     }
                     break;
                 }
@@ -342,13 +442,33 @@ public class VirusMinigame {
         }
 
         // 8. Checagem de Vitória
-        if (viruses.isEmpty()) {
-            isFinished = true;
+        if (!resultReady && viruses.isEmpty()) {
+            resultReady = true;
             isVictory = true;
+            animation.startOutro();
         }
     }
 
+    private Virus encontrarVirusMaisProximo(float x, float y) {
+        Virus maisProximo = null;
+        float menorDistancia = Float.MAX_VALUE;
+
+        for (int i = 0; i < viruses.size(); i++) {
+            Virus v = viruses.get(i);
+            float dx = (v.x + v.width / 2f) - x;
+            float dy = (v.y + v.height / 2f) - y;
+            float distancia = dx * dx + dy * dy;
+            if (distancia < menorDistancia) {
+                menorDistancia = distancia;
+                maisProximo = v;
+            }
+        }
+
+        return maisProximo;
+    }
+
     public void render(SpriteBatch batch, BitmapFont defaultFont) {
+        animation.apply(batch);
         batch.begin();
 
         // 1. Desenha a moldura e fundo do computador
@@ -397,9 +517,24 @@ public class VirusMinigame {
         }
 
         // 4. Desenha o jogador (com efeito de piscar quando invulnerável)
+        if (escudoAtivo) {
+            float pulsoEscudo = 0.35f + 0.20f * MathUtils.sin(stateTime * 6f);
+            batch.setColor(0.20f, 0.70f, 1f, pulsoEscudo);
+            batch.draw(glowTexture, playerX - 14, playerY - 14, playerWidth + 28, playerHeight + 28);
+        }
         if (invulnerabilityTimer <= 0 || ((int)(stateTime * 10) % 2 == 0)) {
             batch.setColor(Color.WHITE);
             batch.draw(playerTexture, playerX, playerY, playerWidth, playerHeight);
+        }
+
+        // 4.1 Drone de backup
+        if (droneTempoRestante > 0f) {
+            batch.setColor(0.25f, 1f, 0.55f, 0.75f);
+            batch.draw(glowTexture, droneX - 12, droneY - 12, 24, 24);
+            batch.setColor(Color.WHITE);
+            batch.draw(pixelTexture, droneX - 5, droneY - 5, 10, 10);
+            batch.setColor(0.25f, 1f, 0.55f, 1f);
+            batch.draw(pixelTexture, droneX - 3, droneY - 3, 6, 6);
         }
 
         // 5. Interface da telinha: Corações lado a lado (Full e Empty)
@@ -419,35 +554,28 @@ public class VirusMinigame {
         customFont.draw(batch, "NIVEL " + dificuldade + "  VIRUS: " + viruses.size(),
             screenBounds.x + screenBounds.width - 160, screenBounds.y + screenBounds.height - 18);
 
-        // 7. Mensagens de Vitória / Derrota perfeitamente centralizadas na tela do computador
-        if (isFinished) {
+        // 7. Mensagens de Vitória / Derrota durante a saída do computador
+        if (resultReady) {
+            String title;
+            Color titleColor;
             if (isVictory) {
-                String title = "SISTEMA DESINFECTADO!";
-                String subtitle = "Pressione [R] para reiniciar ou [ESC] para sair";
-
-                glyphLayout.setText(customFontTitle, title);
-                float titleX = screenBounds.x + (screenBounds.width - glyphLayout.width) / 2f;
-                customFontTitle.setColor(Color.GREEN);
-                customFontTitle.draw(batch, title, titleX, screenBounds.y + screenBounds.height / 2f + 25);
-
-                glyphLayout.setText(customFont, subtitle);
-                float subX = screenBounds.x + (screenBounds.width - glyphLayout.width) / 2f;
-                customFont.setColor(Color.WHITE);
-                customFont.draw(batch, subtitle, subX, screenBounds.y + screenBounds.height / 2f - 15);
+                title = "SISTEMA DESINFECTADO!";
+                titleColor = Color.GREEN;
             } else {
-                String title = "INVASAO CRITICA DE VIRUS!";
-                String subtitle = "Pressione [R] para tentar novamente ou [ESC] para sair";
-
-                glyphLayout.setText(customFontTitle, title);
-                float titleX = screenBounds.x + (screenBounds.width - glyphLayout.width) / 2f;
-                customFontTitle.setColor(Color.RED);
-                customFontTitle.draw(batch, title, titleX, screenBounds.y + screenBounds.height / 2f + 25);
-
-                glyphLayout.setText(customFont, subtitle);
-                float subX = screenBounds.x + (screenBounds.width - glyphLayout.width) / 2f;
-                customFont.setColor(Color.WHITE);
-                customFont.draw(batch, subtitle, subX, screenBounds.y + screenBounds.height / 2f - 15);
+                title = "INVASAO CRITICA DE VIRUS!";
+                titleColor = Color.RED;
             }
+            String subtitle = "RETORNANDO AO TERMINAL...";
+
+            glyphLayout.setText(customFontTitle, title);
+            float titleX = screenBounds.x + (screenBounds.width - glyphLayout.width) / 2f;
+            customFontTitle.setColor(titleColor);
+            customFontTitle.draw(batch, title, titleX, screenBounds.y + screenBounds.height / 2f + 25);
+
+            glyphLayout.setText(customFont, subtitle);
+            float subX = screenBounds.x + (screenBounds.width - glyphLayout.width) / 2f;
+            customFont.setColor(Color.WHITE);
+            customFont.draw(batch, subtitle, subX, screenBounds.y + screenBounds.height / 2f - 15);
         }
 
         // 8. Rodapé informativo com fonte maior, cor preta clareada e centralizado no computador
@@ -459,6 +587,7 @@ public class VirusMinigame {
 
         batch.setColor(Color.WHITE);
         batch.end();
+        animation.reset(batch);
     }
 
     public void dispose() {
