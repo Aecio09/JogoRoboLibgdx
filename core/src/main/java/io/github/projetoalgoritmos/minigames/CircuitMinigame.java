@@ -533,8 +533,14 @@ public class CircuitMinigame {
                 my = 720f - (Gdx.input.getY() * 720f / Gdx.graphics.getHeight());
             }
 
+            // Verifica se tocou no botão de Curinga (Mobile)
+            if (curingaCargas > 0 && my <= screenBounds.y - 14 && my >= screenBounds.y - 48
+                && mx >= compX + 100 && mx <= compX + compWidth - 100) {
+                curingaArmado = !curingaArmado;
+                animation.shake(0.12f, 3f);
+            }
             // Verifica se está dentro da grade
-            if (mx >= gridX && mx < gridX + cellSize * cols &&
+            else if (mx >= gridX && mx < gridX + cellSize * cols &&
                 my >= gridY && my < gridY + cellSize * rows) {
 
                 int col = (int) ((mx - gridX) / cellSize);
@@ -773,7 +779,7 @@ public class CircuitMinigame {
         }
 
         // 8. Rodapé com controles
-        String controlsText = "[CLIQUE]: Rotacionar peca   [R]: Reiniciar   [ESC]: Sair";
+        String controlsText = "[TOQUE / CLIQUE]: Rotacionar peca";
         glyphLayout.setText(controlsFont, controlsText);
         float controlsX = compX + (compWidth - glyphLayout.width) / 2f;
         controlsFont.setColor(COLOR_CONTROLS);
@@ -782,16 +788,31 @@ public class CircuitMinigame {
         String powerupText = "";
         if (curingaCargas > 0) {
             powerupText = curingaArmado
-                ? "CURINGA ARMADO: CLIQUE UMA PECA"
-                : "CHIP CURINGA: [C] PARA ARMAR";
+                ? "CURINGA ARMADO: TOQUE UMA PECA"
+                : "CHIP CURINGA: [TOQUE AQUI OU 'C' PARA ARMAR]";
         } else if (precisaoClicks > 0) {
             powerupText = "CHAVE DE PRECISAO: " + precisaoClicks + " CLIQUES RESTANTES";
         }
         if (!powerupText.isEmpty()) {
             glyphLayout.setText(customFont, powerupText);
             float powerupX = compX + (compWidth - glyphLayout.width) / 2f;
-            customFont.setColor(COR_TRILHA_ENER);
-            customFont.draw(batch, powerupText, powerupX, screenBounds.y - 34);
+
+            if (curingaCargas > 0) {
+                float boxW = glyphLayout.width + 20f;
+                float boxH = 24f;
+                float boxX = powerupX - 10f;
+                float boxY = screenBounds.y - 48f;
+                batch.setColor(curingaArmado ? new Color(1f, 0.45f, 0.95f, 0.25f) : new Color(0.1f, 0.35f, 0.25f, 0.45f));
+                batch.draw(pixelTexture, boxX, boxY, boxW, boxH);
+                batch.setColor(curingaArmado ? new Color(1f, 0.45f, 0.95f, 0.85f) : COR_TRILHA_ENER);
+                batch.draw(pixelTexture, boxX, boxY, boxW, 1.5f);
+                batch.draw(pixelTexture, boxX, boxY + boxH - 1.5f, boxW, 1.5f);
+                batch.draw(pixelTexture, boxX, boxY, 1.5f, boxH);
+                batch.draw(pixelTexture, boxX + boxW - 1.5f, boxY, 1.5f, boxH);
+            }
+
+            customFont.setColor(curingaArmado ? new Color(1f, 0.55f, 0.95f, 1f) : COR_TRILHA_ENER);
+            customFont.draw(batch, powerupText, powerupX, screenBounds.y - 31);
         }
 
         batch.setColor(Color.WHITE);

@@ -15,6 +15,8 @@ import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator;
 import com.badlogic.gdx.graphics.g2d.freetype.FreeTypeFontGenerator.FreeTypeFontParameter;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Rectangle;
+import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.utils.viewport.Viewport;
 import io.github.projetoalgoritmos.datastructures.CustomLinkedList;
 import io.github.projetoalgoritmos.model.Powerup;
 import io.github.projetoalgoritmos.utils.GifDecoder;
@@ -76,6 +78,24 @@ public class VirusMinigame {
     private Texture heartFullTexture;
     private Texture heartEmptyTexture;
     private Animation<TextureRegion> virusAnimation;
+
+    // Controles Touch Virtuais para Mobile
+    private Texture joystickBaseTexture;
+    private Texture joystickKnobTexture;
+    private Texture shootBtnTexture;
+    private final Vector2 tempTouch = new Vector2();
+    private final float joystickBaseX = 140f;
+    private final float joystickBaseY = 140f;
+    private final float joystickRadius = 75f;
+    private final float knobRadius = 30f;
+    private float knobX = joystickBaseX;
+    private float knobY = joystickBaseY;
+    private boolean joystickActive = false;
+
+    private final float shootBtnX = 1140f;
+    private final float shootBtnY = 140f;
+    private final float shootBtnRadius = 55f;
+    private boolean shootBtnPressed = false;
 
     // Fontes TrueType customizadas (BoldPixels.ttf)
     private BitmapFont customFont;
@@ -185,6 +205,80 @@ public class VirusMinigame {
         }
         glowTexture = new Texture(glowPix);
         glowPix.dispose();
+
+        // Texturas procedurais discretas para os controles touch de mobile
+        int bSize = 160;
+        Pixmap bPix = new Pixmap(bSize, bSize, Pixmap.Format.RGBA8888);
+        bPix.setColor(0, 0, 0, 0);
+        bPix.fill();
+        float bCenter = bSize / 2f;
+        for (int x = 0; x < bSize; x++) {
+            for (int y = 0; y < bSize; y++) {
+                float dst = Vector2.dst(x, y, bCenter, bCenter);
+                if (dst <= 76f) {
+                    if (dst >= 70f) {
+                        bPix.setColor(0f, 0.90f, 1f, 0.70f);
+                    } else if (dst >= 68f) {
+                        bPix.setColor(0f, 0.90f, 1f, 0.35f);
+                    } else {
+                        bPix.setColor(0.04f, 0.12f, 0.16f, 0.35f);
+                    }
+                    bPix.drawPixel(x, y);
+                }
+            }
+        }
+        bPix.setColor(0f, 0.90f, 1f, 0.65f);
+        bPix.fillRectangle((int)bCenter - 2, 8, 4, 14);
+        bPix.fillRectangle((int)bCenter - 2, bSize - 22, 4, 14);
+        bPix.fillRectangle(8, (int)bCenter - 2, 14, 4);
+        bPix.fillRectangle(bSize - 22, (int)bCenter - 2, 14, 4);
+        joystickBaseTexture = new Texture(bPix);
+        bPix.dispose();
+
+        int kSize = 64;
+        Pixmap kPix = new Pixmap(kSize, kSize, Pixmap.Format.RGBA8888);
+        kPix.setColor(0, 0, 0, 0);
+        kPix.fill();
+        float kCenter = kSize / 2f;
+        for (int x = 0; x < kSize; x++) {
+            for (int y = 0; y < kSize; y++) {
+                float dst = Vector2.dst(x, y, kCenter, kCenter);
+                if (dst <= 30f) {
+                    float factor = 1f - (dst / 30f);
+                    float alpha = 0.40f + 0.45f * factor;
+                    kPix.setColor(0.1f + 0.9f * factor, 0.95f, 1f, alpha);
+                    kPix.drawPixel(x, y);
+                }
+            }
+        }
+        joystickKnobTexture = new Texture(kPix);
+        kPix.dispose();
+
+        int sSize = 128;
+        Pixmap sPix = new Pixmap(sSize, sSize, Pixmap.Format.RGBA8888);
+        sPix.setColor(0, 0, 0, 0);
+        sPix.fill();
+        float sCenter = sSize / 2f;
+        for (int x = 0; x < sSize; x++) {
+            for (int y = 0; y < sSize; y++) {
+                float dst = Vector2.dst(x, y, sCenter, sCenter);
+                if (dst <= 60f) {
+                    if (dst >= 54f) {
+                        sPix.setColor(0f, 0.92f, 1f, 0.75f);
+                    } else if (dst >= 32f && dst <= 35f) {
+                        sPix.setColor(0f, 0.92f, 1f, 0.40f);
+                    } else {
+                        sPix.setColor(0.18f, 0.05f, 0.05f, 0.40f);
+                    }
+                    sPix.drawPixel(x, y);
+                }
+            }
+        }
+        sPix.setColor(0f, 0.92f, 1f, 0.60f);
+        sPix.fillRectangle((int)sCenter - 1, (int)sCenter - 16, 2, 32);
+        sPix.fillRectangle((int)sCenter - 16, (int)sCenter - 1, 32, 2);
+        shootBtnTexture = new Texture(sPix);
+        sPix.dispose();
     }
 
     private void configurarDimensoes() {
@@ -269,6 +363,10 @@ public class VirusMinigame {
     }
 
     public void update(float delta) {
+        update(delta, null);
+    }
+
+    public void update(float delta, Viewport viewport) {
         stateTime += delta;
         animation.update(delta);
 
@@ -289,19 +387,78 @@ public class VirusMinigame {
             shootCooldown -= delta;
         }
 
-        // 1. Movimento do jogador
+        // Multi-touch handling para Analógico e Botão de Tiro (Mobile)
+        joystickActive = false;
+        shootBtnPressed = false;
+        float touchMoveX = 0f;
+        float touchMoveY = 0f;
+
+        for (int pointer = 0; pointer < 5; pointer++) {
+            if (Gdx.input.isTouched(pointer)) {
+                tempTouch.set(Gdx.input.getX(pointer), Gdx.input.getY(pointer));
+                if (viewport != null) {
+                    viewport.unproject(tempTouch);
+                } else {
+                    tempTouch.x = tempTouch.x * 1280f / Gdx.graphics.getWidth();
+                    tempTouch.y = 720f - (tempTouch.y * 720f / Gdx.graphics.getHeight());
+                }
+
+                // Botão de tiro (lado direito: proximidade do botão ou zona de toque da direita)
+                float dstShoot = Vector2.dst(tempTouch.x, tempTouch.y, shootBtnX, shootBtnY);
+                if (dstShoot <= shootBtnRadius * 1.45f || (tempTouch.x >= 980f && tempTouch.y <= 300f)) {
+                    shootBtnPressed = true;
+                }
+                // Analógico virtual (lado esquerdo: x <= 500 && y <= 450)
+                else if (tempTouch.x <= 500f && tempTouch.y <= 450f) {
+                    joystickActive = true;
+                    float dx = tempTouch.x - joystickBaseX;
+                    float dy = tempTouch.y - joystickBaseY;
+                    float dist = (float) Math.sqrt(dx * dx + dy * dy);
+                    if (dist > joystickRadius) {
+                        dx = (dx / dist) * joystickRadius;
+                        dy = (dy / dist) * joystickRadius;
+                    }
+                    knobX = joystickBaseX + dx;
+                    knobY = joystickBaseY + dy;
+
+                    if (dist > 6f) {
+                        touchMoveX = dx / joystickRadius;
+                        touchMoveY = dy / joystickRadius;
+                    }
+                }
+            }
+        }
+
+        if (!joystickActive) {
+            knobX = joystickBaseX;
+            knobY = joystickBaseY;
+        }
+
+        // 1. Movimento do jogador (Combina Analógico Touch + Teclado WASD / Setas)
+        float moveX = touchMoveX;
+        float moveY = touchMoveY;
+
         if (Gdx.input.isKeyPressed(Input.Keys.A) || Gdx.input.isKeyPressed(Input.Keys.LEFT)) {
-            playerX -= playerSpeed * delta;
+            moveX -= 1f;
         }
         if (Gdx.input.isKeyPressed(Input.Keys.D) || Gdx.input.isKeyPressed(Input.Keys.RIGHT)) {
-            playerX += playerSpeed * delta;
+            moveX += 1f;
         }
         if (Gdx.input.isKeyPressed(Input.Keys.W) || Gdx.input.isKeyPressed(Input.Keys.UP)) {
-            playerY += playerSpeed * delta;
+            moveY += 1f;
         }
         if (Gdx.input.isKeyPressed(Input.Keys.S) || Gdx.input.isKeyPressed(Input.Keys.DOWN)) {
-            playerY -= playerSpeed * delta;
+            moveY -= 1f;
         }
+
+        float moveLen = (float) Math.sqrt(moveX * moveX + moveY * moveY);
+        if (moveLen > 1f) {
+            moveX /= moveLen;
+            moveY /= moveLen;
+        }
+
+        playerX += moveX * playerSpeed * delta;
+        playerY += moveY * playerSpeed * delta;
 
         // 2. Colisão com as bordas da tela do monitor (Clamping)
         playerX = MathUtils.clamp(playerX, screenBounds.x, screenBounds.x + screenBounds.width - playerWidth);
@@ -339,8 +496,9 @@ public class VirusMinigame {
             }
         }
 
-        // 3. Disparo do jogador (Espaço)
-        if (Gdx.input.isKeyPressed(Input.Keys.SPACE) && shootCooldown <= 0) {
+        // 3. Disparo do jogador (Espaço ou Botão Touch)
+        boolean atirar = Gdx.input.isKeyPressed(Input.Keys.SPACE) || shootBtnPressed;
+        if (atirar && shootCooldown <= 0) {
             float bulletX = playerX + (playerWidth / 2f) - 3;
             float bulletY = playerY + playerHeight - 6;
             float bulletSpeed = temEfeito(Powerup.Efeito.OVERCLOCK) ? 575f : 460f;
@@ -578,8 +736,23 @@ public class VirusMinigame {
             customFont.draw(batch, subtitle, subX, screenBounds.y + screenBounds.height / 2f - 15);
         }
 
-        // 8. Rodapé informativo com fonte maior, cor preta clareada e centralizado no computador
-        String controlsText = "[WASD / Setas]: Mover   [ESPACO]: Atirar   [R]: Reiniciar   [ESC]: Sair";
+        // 8. Controles Touch Virtuais para Mobile (Discretos)
+        batch.setColor(1f, 1f, 1f, joystickActive ? 0.45f : 0.22f);
+        batch.draw(joystickBaseTexture, joystickBaseX - joystickRadius, joystickBaseY - joystickRadius, joystickRadius * 2f, joystickRadius * 2f);
+
+        batch.setColor(0f, 0.95f, 1f, joystickActive ? 0.75f : 0.38f);
+        batch.draw(joystickKnobTexture, knobX - knobRadius, knobY - knobRadius, knobRadius * 2f, knobRadius * 2f);
+
+        batch.setColor(shootBtnPressed ? 1f : 0f, shootBtnPressed ? 0.40f : 0.92f, 1f, shootBtnPressed ? 0.70f : 0.30f);
+        batch.draw(shootBtnTexture, shootBtnX - shootBtnRadius, shootBtnY - shootBtnRadius, shootBtnRadius * 2f, shootBtnRadius * 2f);
+
+        customFont.setColor(Color.WHITE.r, Color.WHITE.g, Color.WHITE.b, shootBtnPressed ? 0.90f : 0.50f);
+        customFont.getData().setScale(0.72f);
+        glyphLayout.setText(customFont, "TIRO");
+        customFont.draw(batch, "TIRO", shootBtnX - glyphLayout.width / 2f, shootBtnY + glyphLayout.height / 2f);
+
+        // 9. Rodapé informativo com fonte maior, cor preta clareada e centralizado no computador
+        String controlsText = "[ANALOGICO / WASD]: Mover   [TIRO / ESPACO]: Atirar";
         glyphLayout.setText(controlsFont, controlsText);
         float controlsX = compX + (compWidth - glyphLayout.width) / 2f;
         controlsFont.setColor(COLOR_CONTROLS_TEXT);
@@ -597,6 +770,9 @@ public class VirusMinigame {
         if (glowTexture != null) glowTexture.dispose();
         if (heartFullTexture != null) heartFullTexture.dispose();
         if (heartEmptyTexture != null) heartEmptyTexture.dispose();
+        if (joystickBaseTexture != null) joystickBaseTexture.dispose();
+        if (joystickKnobTexture != null) joystickKnobTexture.dispose();
+        if (shootBtnTexture != null) shootBtnTexture.dispose();
         if (customFont != null) customFont.dispose();
         if (customFontTitle != null) customFontTitle.dispose();
         if (controlsFont != null) controlsFont.dispose();

@@ -29,12 +29,14 @@ import io.github.projetoalgoritmos.model.*;
 import io.github.projetoalgoritmos.utils.GifDecoder;
 import io.github.projetoalgoritmos.minigames.CircuitMinigame;
 import io.github.projetoalgoritmos.minigames.VirusMinigame;
+import io.github.projetoalgoritmos.utils.VirtualKeyboard;
 
 public class Main extends ApplicationAdapter {
     private enum GameState { LOGIN, PLAYING, MINIGAME_VIRUS, MINIGAME_CIRCUIT, GAMEOVER, RANKING }
     private GameState currentState = GameState.LOGIN;
     private VirusMinigame virusMinigame;
     private CircuitMinigame circuitMinigame;
+    private VirtualKeyboard virtualKeyboard;
     private String playerName = "";
 
     private static final float TEMPO_BASE_DIA = 90f;
@@ -132,13 +134,16 @@ public class Main extends ApplicationAdapter {
         initNewSession();
         virusMinigame = new VirusMinigame();
         circuitMinigame = new CircuitMinigame();
+        virtualKeyboard = new VirtualKeyboard();
 
         Gdx.input.setInputProcessor(new InputAdapter() {
             @Override
             public boolean keyTyped(char character) {
                 if (currentState != GameState.LOGIN) return false;
                 if (character >= 32 && character <= 126) {
-                    inputBuffer += character;
+                    if (inputBuffer.length() < 12) {
+                        inputBuffer += character;
+                    }
                     return true;
                 }
                 return false;
@@ -152,12 +157,12 @@ public class Main extends ApplicationAdapter {
                         return true;
                     }
                     if (keycode == Input.Keys.ENTER) {
-                        if (!inputBuffer.trim().isEmpty()) {
-                            playerName = inputBuffer.trim();
-                            inputBuffer = "";
-                            currentState = GameState.PLAYING;
-                            iniciarDia(1);
-                        }
+                        String finalName = inputBuffer.trim();
+                        if (finalName.isEmpty()) finalName = "OPERADOR";
+                        playerName = finalName;
+                        inputBuffer = "";
+                        currentState = GameState.PLAYING;
+                        iniciarDia(1);
                         return true;
                     }
                     return false;
@@ -447,7 +452,38 @@ public class Main extends ApplicationAdapter {
             notificacaoTimer -= dt;
         }
 
-        if (currentState == GameState.PLAYING) {
+        if (currentState == GameState.LOGIN) {
+            virtualKeyboard.update(dt);
+            if (Gdx.input.justTouched()) {
+                touchPoint.set(Gdx.input.getX(), Gdx.input.getY());
+                viewport.unproject(touchPoint);
+                String action = virtualKeyboard.handleTouch(touchPoint.x, touchPoint.y);
+                if (action != null) {
+                    if (action.equals("ENTER")) {
+                        String finalName = inputBuffer.trim();
+                        if (finalName.isEmpty()) finalName = "OPERADOR";
+                        playerName = finalName;
+                        inputBuffer = "";
+                        currentState = GameState.PLAYING;
+                        iniciarDia(1);
+                    } else if (action.equals("BACKSPACE")) {
+                        if (inputBuffer.length() > 0) {
+                            inputBuffer = inputBuffer.substring(0, inputBuffer.length() - 1);
+                        }
+                    } else if (action.equals("CLEAR")) {
+                        inputBuffer = "";
+                    } else if (action.equals("SPACE")) {
+                        if (inputBuffer.length() < 12 && inputBuffer.length() > 0) {
+                            inputBuffer += " ";
+                        }
+                    } else {
+                        if (inputBuffer.length() < 12) {
+                            inputBuffer += action;
+                        }
+                    }
+                }
+            }
+        } else if (currentState == GameState.PLAYING) {
             if (transicaoDia) {
                 transicaoTimer += dt;
                 if (transicaoTimer >= DURACAO_PORTA_GARAGEM && Gdx.input.justTouched()) {
@@ -455,9 +491,27 @@ public class Main extends ApplicationAdapter {
                     viewport.unproject(touchPoint);
                     for (int i = 0; i < cartasPowerup.length; i++) {
                         if (cartaContem(i, touchPoint.x, touchPoint.y)) {
-                            selecionarCarta(i);
+                            if (cartaSelecionada == i) {
+                                // Toque repetido na carta já selecionada confirma e avança
+                                aplicarCartaSelecionada();
+                                int proximoDia = gameController.getDiaAtual() + 1;
+                                transicaoDia = false;
+                                transicaoTimer = 0f;
+                                iniciarDia(proximoDia);
+                            } else {
+                                selecionarCarta(i);
+                            }
                             break;
                         }
+                    }
+
+                    // Toque na barra inferior de confirmação
+                    if (cartaSelecionada >= 0 && touchPoint.y >= 120 && touchPoint.y <= 180 && touchPoint.x >= 200 && touchPoint.x <= 1080) {
+                        aplicarCartaSelecionada();
+                        int proximoDia = gameController.getDiaAtual() + 1;
+                        transicaoDia = false;
+                        transicaoTimer = 0f;
+                        iniciarDia(proximoDia);
                     }
                 }
             } else {
@@ -472,6 +526,7 @@ public class Main extends ApplicationAdapter {
                     float mx = touchPoint.x;
                     float my = touchPoint.y;
 
+                    // 1. Toque na fila de espera à esquerda
                     if (mx >= 80 && mx <= 360) {
                         for (int i = 0; i < gameController.getOficina().size(); i++) {
                             float ry = 570 - (i * 75);
@@ -486,6 +541,16 @@ public class Main extends ApplicationAdapter {
                             }
                         }
                     }
+                    // 2. Toque no robô central ou no botão de Iniciar Reparo
+                    else if (mx >= 440 && mx <= 960 && my >= 170 && my <= 450) {
+                        if (activeRobo != null) {
+                            iniciarReparo();
+                        }
+                    }
+                    // 3. Toque no botão de Ranking no rodapé ou na barra superior
+                    else if ((mx >= 780 && mx <= 1000 && my <= 120) || (mx >= 1140 && my >= 660)) {
+                        currentState = GameState.RANKING;
+                    }
                 }
             }
         } else if (currentState == GameState.MINIGAME_VIRUS || currentState == GameState.MINIGAME_CIRCUIT) {
@@ -499,8 +564,30 @@ public class Main extends ApplicationAdapter {
                     triggerGameOver();
                 }
             }
+
+            // Toque no botão de Voltar/Sair do HUD (Mobile)
+            if (Gdx.input.justTouched()) {
+                touchPoint.set(Gdx.input.getX(), Gdx.input.getY());
+                viewport.unproject(touchPoint);
+                if (touchPoint.x >= 1110f && touchPoint.x <= 1260f && touchPoint.y >= 660f && touchPoint.y <= 715f) {
+                    boolean resultadoPronto = currentState == GameState.MINIGAME_VIRUS
+                        ? virusMinigame.isResultReady()
+                        : circuitMinigame.isResultReady();
+                    if (!resultadoPronto) {
+                        cancelarReparo();
+                    }
+                }
+            }
+        } else if (currentState == GameState.RANKING) {
+            if (Gdx.input.justTouched()) {
+                currentState = GameState.PLAYING;
+            }
         } else if (currentState == GameState.GAMEOVER) {
             gameOverTime += dt;
+            if (gameOverTime > 0.5f && Gdx.input.justTouched()) {
+                currentState = GameState.LOGIN;
+                initNewSession();
+            }
         }
 
         batch.begin();
@@ -518,7 +605,7 @@ public class Main extends ApplicationAdapter {
         } else if (currentState == GameState.RANKING) {
             drawRankingMenu();
         } else if (currentState == GameState.MINIGAME_VIRUS) {
-            virusMinigame.update(dt);
+            virusMinigame.update(dt, viewport);
             if (virusMinigame.isFinished()) {
                 finalizarReparo(virusMinigame.isVictory());
                 if (currentState == GameState.PLAYING) drawInterface();
@@ -551,28 +638,53 @@ public class Main extends ApplicationAdapter {
     }
 
     private void drawLoginScreen() {
+        // 1. Janela do Terminal Superior (Identificação do Operador)
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
         shapeRenderer.setColor(COLOR_SURFACE);
-        shapeRenderer.rect(440, 300, 400, 200);
+        shapeRenderer.rect(220, 350, 840, 320);
         shapeRenderer.setColor(COLOR_CYAN);
-        shapeRenderer.rect(440, 498, 400, 2);
+        shapeRenderer.rect(220, 668, 840, 2);
+
+        // Caixa de texto do input do nome
+        shapeRenderer.setColor(new Color(0.03f, 0.05f, 0.08f, 1f));
+        shapeRenderer.rect(260, 475, 760, 62);
+        shapeRenderer.setColor(COLOR_CYAN);
+        shapeRenderer.rect(260, 475, 760, 1.5f);
+        shapeRenderer.rect(260, 535, 760, 1.5f);
+        shapeRenderer.rect(260, 475, 1.5f, 62);
+        shapeRenderer.rect(1018, 475, 1.5f, 62);
         shapeRenderer.end();
 
         batch.begin();
-        font.getData().setScale(1.2f);
+        font.getData().setScale(1.25f);
         font.setColor(COLOR_CYAN);
-        font.draw(batch, "[ SYSTEM ACCESS REQUIRED ]", 480, 470);
-        font.getData().setScale(0.8f);
-        font.draw(batch, "ENTER OPERATOR NAME:", 460, 420);
-        font.getData().setScale(1.5f);
-        font.draw(batch, "> " + inputBuffer + "_", 460, 380);
-        font.getData().setScale(0.7f);
-        font.draw(batch, "PRESS ENTER TO AUTHORIZE", 540, 320);
+        desenharCentralizado("[ SYSTEM ACCESS REQUIRED ]", 220, 642, 840);
+
+        font.getData().setScale(0.85f);
         font.setColor(Color.WHITE);
-        font.draw(batch, "PROTOTIPO: REPAROS VIA MINIGAMES", 490, 265);
-        font.setColor(COLOR_CYAN);
-        font.draw(batch, "DEFEITOS: VIRUS  |  CURTO-CIRCUITO", 485, 240);
+        desenharCentralizado("IDENTIFICACAO DO OPERADOR (MAX 12 CARACTERES):", 220, 580, 840);
+
+        // Texto digitado
+        boolean blink = ((int)(stateTime * 2.5f) % 2 == 0);
+        font.getData().setScale(1.35f);
+        if (inputBuffer.isEmpty()) {
+            font.setColor(COLOR_CYAN.cpy().mul(1, 1, 1, 0.45f));
+            desenharCentralizado("> DIGITE SEU NOME" + (blink ? "_" : " "), 260, 518, 760);
+        } else {
+            font.setColor(COLOR_CYAN);
+            desenharCentralizado("> " + inputBuffer + (blink ? "_" : " "), 260, 518, 760);
+        }
+
+        font.getData().setScale(0.72f);
+        font.setColor(COLOR_HAZARD);
+        desenharCentralizado("TOQUE NO TECLADO VIRTUAL ABAIXO OU USE O TECLADO FISICO", 220, 435, 840);
+
+        font.setColor(Color.WHITE);
+        desenharCentralizado("PROTOTIPO: REPAROS VIA MINIGAMES  |  VIRUS & CIRCUITOS", 220, 395, 840);
         batch.end();
+
+        // 2. Renderiza o Teclado Virtual no terço inferior da tela
+        virtualKeyboard.render(shapeRenderer, batch, font);
     }
 
     private void drawRankingMenu() {
@@ -596,7 +708,7 @@ public class Main extends ApplicationAdapter {
         
         font.setColor(Color.WHITE);
         font.getData().setScale(0.8f);
-        font.draw(batch, "PRESS ENTER OR ESC TO RETURN", 540, 170);
+        font.draw(batch, "TOQUE NA TELA OU ENTER PARA VOLTAR", 460, 170);
         batch.end();
     }
 
@@ -634,7 +746,7 @@ public class Main extends ApplicationAdapter {
         
         font.getData().setScale(0.8f);
         font.setColor(COLOR_CYAN);
-        font.draw(batch, "PRESS ENTER TO REBOOT TERMINAL", 540, 110);
+        font.draw(batch, "TOQUE NA TELA OU ENTER PARA REINICIAR", 450, 110);
         batch.end();
     }
 
@@ -647,6 +759,12 @@ public class Main extends ApplicationAdapter {
         shapeRenderer.rect(18, 666, 330, 40);
         shapeRenderer.setColor(corTempo);
         shapeRenderer.rect(18, 666, 330, 2);
+
+        // Botão de Voltar/Sair do minigame (Touch Mobile)
+        shapeRenderer.setColor(0.18f, 0.05f, 0.05f, 0.85f);
+        shapeRenderer.rect(1120, 666, 140, 40);
+        shapeRenderer.setColor(COLOR_ALERT_TEXT);
+        shapeRenderer.rect(1120, 666, 140, 2);
         shapeRenderer.end();
 
         batch.begin();
@@ -656,6 +774,9 @@ public class Main extends ApplicationAdapter {
             + "  |  TEMPO " + formatarTempo(tempo), 28, 694);
         font.setColor(Color.WHITE);
         font.draw(batch, "REPARO: UNIT_" + (roboEmReparo != null ? roboEmReparo.getId() : "---"), 28, 676);
+
+        font.setColor(COLOR_ALERT_TEXT);
+        desenharCentralizado("[ < SAIR ]", 1120, 693, 140);
         batch.end();
     }
 
@@ -700,7 +821,9 @@ public class Main extends ApplicationAdapter {
         font.setColor(tempo <= 15f ? COLOR_ALERT_TEXT : COLOR_CYAN);
         font.draw(batch, "TEMPO " + formatarTempo(tempo), 620, 700);
         font.setColor(COLOR_CYAN);
-        font.draw(batch, "FILA " + restantes + "  |  REPARADOS " + reparados, 810, 700);
+        font.draw(batch, "FILA " + restantes + "  |  REPARADOS " + reparados, 780, 700);
+        font.setColor(COLOR_HAZARD);
+        font.draw(batch, "[ RANKING ]", 1145, 700);
 
         // Fila de robôs
         font.setColor(COLOR_CYAN);
@@ -749,9 +872,21 @@ public class Main extends ApplicationAdapter {
             font.setColor(COLOR_CYAN);
             font.draw(batch, activeRobo.getDefeito().getDescricao(), 475, 580);
 
+            batch.end();
+            shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+            shapeRenderer.setColor(new Color(0.04f, 0.28f, 0.38f, 0.85f));
+            shapeRenderer.rect(480, 185, 440, 48);
+            shapeRenderer.setColor(COLOR_CYAN);
+            shapeRenderer.rect(480, 185, 440, 2);
+            shapeRenderer.rect(480, 231, 440, 2);
+            shapeRenderer.rect(480, 185, 2, 48);
+            shapeRenderer.rect(918, 185, 2, 48);
+            shapeRenderer.end();
+
+            batch.begin();
             font.getData().setScale(1.0f);
             font.setColor(Color.WHITE);
-            font.draw(batch, "[ ENTER ] INICIAR REPARO", 530, 205);
+            desenharCentralizado("[ TOQUE OU ENTER ] INICIAR REPARO", 480, 218, 440);
         } else {
             font.getData().setScale(1.1f);
             font.setColor(COLOR_CYAN);
@@ -796,7 +931,7 @@ public class Main extends ApplicationAdapter {
         // Rodapé
         font.getData().setScale(0.8f);
         font.setColor(COLOR_CYAN);
-        font.draw(batch, "[CLIQUE] Selecionar   [ENTER] Iniciar reparo   [TAB] Ranking", 430, 80);
+        font.draw(batch, "[TOQUE] Selecionar/Iniciar reparo   [RANKING] Ver recordes", 430, 80);
         font.getData().setScale(0.7f);
         font.setColor(COLOR_ALERT_TEXT);
         font.draw(batch, "TEMPO ESGOTADO ENCERRA O TURNO", 430, 110);
@@ -1017,12 +1152,12 @@ public class Main extends ApplicationAdapter {
         font.getData().setScale(0.78f);
         if (cartaSelecionada < 0) {
             font.setColor(COLOR_CYAN.r, COLOR_CYAN.g, COLOR_CYAN.b, Math.max(0.35f, blink));
-            desenharCentralizado("ESCOLHA UMA CARTA  [1] [2]  OU CLIQUE", 0, 155, 1280);
+            desenharCentralizado("ESCOLHA UMA CARTA: TOQUE OU [1] [2]", 0, 155, 1280);
         } else {
             font.setColor(COLOR_CYAN);
             desenharCentralizado("POWER-UP SELECIONADO: "
                 + cartasPowerup[cartaSelecionada].getNome()
-                + "  [ESPACO] CONTINUAR", 0, 155, 1280);
+                + "  [TOQUE OU ESPACO] CONTINUAR", 0, 155, 1280);
         }
         batch.end();
     }
